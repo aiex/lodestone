@@ -1,0 +1,16 @@
+# Lodestone — never commit private fleet info
+config/
+data/
+*.session
+*.session-journal
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+build/
+dist/

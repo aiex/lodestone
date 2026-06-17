@@ -1,0 +1,75 @@
+# Lodestone config TEMPLATE.
+# Copy to config/config.yaml and fill in. config/ is gitignored — your real
+# fleet info never enters the repo.
+#
+#   cp config.example.yaml config/config.yaml
+
+telegram:
+  # From https://my.telegram.org -> API development tools
+  api_id: 0
+  api_hash: ""
+  # Session for the ACCOUNT that runs the back leg (messaging agent bots).
+  # A dedicated account is recommended (see README). Create it with:
+  #   lodestone login
+  session: "data/lodestone.session"
+  # Session for the front-door bot.
+  bot_session: "data/lodestone-bot.session"
+  # Front-door bot token from BotFather. This is how you talk to Lodestone.
+  # Leave empty to use the hub group on the account instead (Phase 1 style).
+  bot_token: ""
+  # Telegram user ids allowed to command the fleet via the bot (REQUIRED for
+  # the bot to respond — empty means nobody, which is the safe default).
+  allowed_users: []
+  # Fallback control surface if no bot_token. Run `lodestone chats` to find it.
+  hub_chat_id: 0
+
+database:
+  path: "data/lodestone.db"
+
+ai:
+  # OpenAI-compatible endpoint — one adapter for OpenAI, Kimi (Moonshot),
+  # GLM (Zhipu), or a local proxy like Meridian. Just swap base_url/key/model.
+  # Leave api_key empty to disable natural language (slash commands still work).
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "gpt-4o-mini"
+
+dispatch:
+  # Seconds to wait for an agent's reply before timing out.
+  reply_timeout: 60
+
+# Your fleet. id must be unique. telegram_peer is the agent bot's @username
+# (or numeric chat id) that the orchestrator account can message.
+agents:
+  - id: hermes-a
+    name: "Hermes A"
+    type: hermes
+    host: "ec2-xxxxx"
+    telegram_peer: "@hermes_a_bot"
+    projects:
+      - cricap
+      - indiweather
+    permissions:
+      - "ec2:hermes-a"
+      - "s3:cricap-assets"
+
+  - id: hermes-b
+    name: "Hermes B"
+    type: hermes
+    host: "ec2-yyyyy"
+    telegram_peer: "@hermes_b_bot"
+    projects:
+      - 96football
+    permissions:
+      - "ec2:hermes-b"
+
+  - id: openclaw-1
+    name: "OpenClaw"
+    type: openclaw
+    host: "ec2-zzzzz"
+    telegram_peer: "@openclaw_bot"
+    projects:
+      - coldplay.io
+    permissions:
+      - "ec2:openclaw-1"
+      - "gateway:18789"
