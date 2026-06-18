@@ -15,7 +15,10 @@ class OpenAICompatProvider:
         self.model = model
         self.timeout = timeout
 
-    async def chat(self, messages: list, tools: list = None) -> dict:
+    async def chat(self, messages: list, tools: list = None):
+        """Return (message, usage). usage is the provider's token-count dict
+        (prompt_tokens / completion_tokens / total_tokens), or {} if absent —
+        it feeds the dashboard's usage/cost tracking."""
         payload = {"model": self.model, "messages": messages}
         if tools:
             payload["tools"] = tools
@@ -30,4 +33,4 @@ class OpenAICompatProvider:
             )
             r.raise_for_status()
             data = r.json()
-        return data["choices"][0]["message"]
+        return data["choices"][0]["message"], data.get("usage") or {}

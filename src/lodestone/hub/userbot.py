@@ -18,9 +18,16 @@ def attach_hub_handler(client: TelegramClient, hub: control.Hub) -> None:
     if not hub_chat_id:
         print("WARNING: no bot_token and no hub_chat_id — there is no control "
               "surface. Set telegram.bot_token or telegram.hub_chat_id.")
+        return
+    if not hub.allowed_users:
+        print("WARNING: hub_chat_id is set but allowed_users is empty — hub "
+              "control is disabled until telegram.allowed_users is configured.")
+        return
 
     @client.on(events.NewMessage(chats=hub_chat_id))
     async def _on_message(event):
+        if not control.is_allowed_sender(hub, event.sender_id):
+            return
         reply = await control.handle_text(hub, event.raw_text)
         if reply:
             await event.reply(reply)

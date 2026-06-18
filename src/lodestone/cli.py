@@ -5,46 +5,54 @@ from .registry import db
 
 
 def main() -> None:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", default=argparse.SUPPRESS, help="path to config.yaml")
     parser = argparse.ArgumentParser(
+        parents=[common],
         prog="lodestone", description="Lodestone — agent fleet control plane"
     )
-    parser.add_argument("--config", default=None, help="path to config.yaml")
     sub = parser.add_subparsers(dest="cmd")
-    sub.add_parser("init", help="create the database and sync from config")
-    sub.add_parser("sync", help="re-sync agents/projects/permissions from config")
-    sub.add_parser("run", help="start the hub (account + front-door bot + AI brain)")
-    sub.add_parser("login", help="one-time interactive login to create the account session")
-    sub.add_parser("agents", help="print agents to the terminal (no Telegram needed)")
-    sub.add_parser("chats", help="list recent chats and their ids (to find hub_chat_id)")
+    sub.add_parser("init", parents=[common], help="create the database and sync from config")
+    sub.add_parser("sync", parents=[common], help="re-sync agents/projects/permissions from config")
+    sub.add_parser("run", parents=[common], help="start the hub (account + front-door bot + AI brain)")
+    sub.add_parser("dashboard", parents=[common], help="serve the web dashboard (FastAPI, localhost + token)")
+    sub.add_parser("login", parents=[common], help="one-time interactive login to create the account session")
+    sub.add_parser("agents", parents=[common], help="print agents to the terminal (no Telegram needed)")
+    sub.add_parser("chats", parents=[common], help="list recent chats and their ids (to find hub_chat_id)")
     args = parser.parse_args()
+    config_path = getattr(args, "config", None)
 
     if args.cmd == "init":
-        config = load_config(args.config)
+        config = load_config(config_path)
         db.init_db(config.db_path)
         db.sync_from_config(config.db_path, config)
         print(f"OK: database ready and synced -> {config.db_path}")
 
     elif args.cmd == "sync":
-        config = load_config(args.config)
+        config = load_config(config_path)
         db.sync_from_config(config.db_path, config)
         print("OK: synced from config.")
 
     elif args.cmd == "agents":
         from .hub import commands
-        config = load_config(args.config)
+        config = load_config(config_path)
         db.init_db(config.db_path)
         db.sync_from_config(config.db_path, config)
         print(commands.cmd_agents(config.db_path))
 
     elif args.cmd == "chats":
-        _list_chats(args.config)
+        _list_chats(config_path)
 
     elif args.cmd == "login":
-        _login(args.config)
+        _login(config_path)
 
     elif args.cmd == "run":
         from .hub import runner
-        runner.run(args.config)
+        runner.run(config_path)
+
+    elif args.cmd == "dashboard":
+        from .web import app as webapp
+        webapp.serve(config_path)
 
     else:
         parser.print_help()

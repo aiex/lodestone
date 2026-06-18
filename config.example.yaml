@@ -17,8 +17,9 @@ telegram:
   # Front-door bot token from BotFather. This is how you talk to Lodestone.
   # Leave empty to use the hub group on the account instead (Phase 1 style).
   bot_token: ""
-  # Telegram user ids allowed to command the fleet via the bot (REQUIRED for
-  # the bot to respond — empty means nobody, which is the safe default).
+  # Telegram user ids allowed to command the fleet via the bot OR hub group
+  # (REQUIRED for any control surface to respond — empty means nobody, which is
+  # the safe default).
   allowed_users: []
   # Fallback control surface if no bot_token. Run `lodestone chats` to find it.
   hub_chat_id: 0
@@ -33,13 +34,51 @@ ai:
   base_url: "https://api.openai.com/v1"
   api_key: ""
   model: "gpt-4o-mini"
+  # Optional: USD per 1,000,000 tokens, used for the dashboard's cost column.
+  # A few common models are priced by default; override or add yours here.
+  # Token counts are always exact — only cost depends on these numbers.
+  # pricing:
+  #   gpt-4o-mini: { input: 0.15, output: 0.60 }
+  #   my-proxy-model: { input: 0.0, output: 0.0 }
+
+web:
+  # The Phase 3 dashboard. Binds to localhost only by default; auth is a token.
+  #   lodestone dashboard   # prints the URL (with token) to open
+  host: "127.0.0.1"
+  port: 8765
+  # Leave blank to auto-generate a token on each start (printed at startup).
+  # Set a fixed value if you want a stable bookmarkable URL.
+  token: ""
 
 dispatch:
   # Seconds to wait for an agent's reply before timing out.
   reply_timeout: 60
 
+loop:
+  # Phase 4 "Agent Loop": let a task run across many agent steps without
+  # babysitting, within a token budget, while Lodestone stays in control.
+  #   /loop <project> <task>   then   /loop_confirm <task_id>
+  # Live projects (see projects[].status below) HALT at PR creation for your
+  # /approve before deploy; dev projects run straight through.
+  enabled: false
+  # Per-run hard token cap. The loop stops when consumption reaches it.
+  token_budget: 2000000
+  # Hard watchdog on iterations, independent of tokens (loop-forever guard).
+  max_steps: 40
+  # Seconds to wait for the agent's next checkpoint before the step times out
+  # and the run is marked errored (a loop step can take longer than a one-shot
+  # dispatch since the agent is doing real work between checkpoints).
+  heartbeat_timeout: 300
+  # Budget alert thresholds (fraction of token_budget).
+  warn_at: 0.75
+  constrain_at: 0.90
+
 # Your fleet. id must be unique. telegram_peer is the agent bot's @username
 # (or numeric chat id) that the orchestrator account can message.
+#
+# A project may be a bare string (defaults to status: dev) or a mapping with an
+# explicit status. 'live' projects make the Agent Loop stop at PR creation for
+# your /approve before deploy; 'dev' projects loop straight through.
 agents:
   - id: hermes-a
     name: "Hermes A"
@@ -47,7 +86,7 @@ agents:
     host: "ec2-xxxxx"
     telegram_peer: "@hermes_a_bot"
     projects:
-      - cricap
+      - cricap                  # bare string => status: dev
       - indiweather
     permissions:
       - "ec2:hermes-a"
@@ -69,7 +108,8 @@ agents:
     host: "ec2-zzzzz"
     telegram_peer: "@openclaw_bot"
     projects:
-      - coldplay.io
+      - name: coldplay.io       # mapping form => explicit status
+        status: live            # loop halts at PR creation for /approve
     permissions:
       - "ec2:openclaw-1"
       - "gateway:18789"

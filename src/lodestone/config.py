@@ -28,6 +28,16 @@ class Config:
         return self._data.get("ai", {})
 
     @property
+    def web(self) -> dict:
+        """Dashboard settings. Defaults bind to localhost only (token auth)."""
+        return self._data.get("web", {}) or {}
+
+    @property
+    def loop(self) -> dict:
+        """Agent Loop settings. Absent block == feature off (enabled defaults False)."""
+        return self._data.get("loop", {}) or {}
+
+    @property
     def db_path(self) -> str:
         return self._data.get("database", {}).get("path", "data/lodestone.db")
 
@@ -36,6 +46,25 @@ class Config:
             if a.get("id") == agent_id:
                 return a
         return None
+
+
+VALID_PROJECT_STATUS = ("dev", "live")
+
+
+def normalize_project(entry) -> tuple:
+    """Accept a project as a bare string or a {name, status} mapping.
+
+    Backward-compatible: a string defaults to status 'dev', so existing configs
+    keep working. Any status other than dev/live falls back to 'dev' (fail-safe:
+    you must opt a project into the stricter 'live' gate explicitly).
+    """
+    if isinstance(entry, str):
+        return entry, "dev"
+    name = entry.get("name")
+    status = (entry.get("status") or "dev").strip().lower()
+    if status not in VALID_PROJECT_STATUS:
+        status = "dev"
+    return name, status
 
 
 def load_config(path: str = None) -> Config:
