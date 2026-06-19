@@ -22,7 +22,7 @@ import uuid
 from ..registry import db
 from ..ai import cost as cost_mod
 from ..ai.budget import BudgetMonitor, estimate_run
-from . import protocol
+from . import permissions as permission_mod, protocol
 
 
 class LoopResult:
@@ -36,11 +36,12 @@ class LoopResult:
 
 
 class LoopSupervisor:
-    def __init__(self, db_path, config, send_and_wait):
+    def __init__(self, db_path, config, send_and_wait, memory=None):
         self.db_path = db_path
         self.config = config
         # send_and_wait(peer, text) -> reply_text (async)
         self._send = send_and_wait
+        self.memory = memory
         cfg = config.loop if hasattr(config, "loop") else {}
         self.cfg = cfg or {}
         self.token_budget = int(self.cfg.get("token_budget", 2_000_000))
@@ -51,27 +52,37 @@ class LoopSupervisor:
 
     # --- estimation / start ------------------------------------------------
 
-    def estimate(self, project_name, task, steps=None):
+    def estimate(self, project_name, task, steps=None, required_permissions=None):
         """Pre-flight: persist an 'estimated' run and return (task_id, Estimate).
 
         Does NOT start work — the control surface shows the estimate and waits
         for /loop_confirm. Returns (None, error_str) if the project is unknown.
         """
-        row = db.get_project(self.db_path, project_name)
+        try:
+            row = db.get_project(self.db_path, project_name)
+        except ValueError as e:
+            return None, str(e)
         if not row:
             return None, f"No such project: {project_name}"
+        clean_task, scopes = permission_mod.extract_task_requirements(task, required_permissions)
+        if not clean_task:
+            return None, "Task cannot be empty."
         agent = self.config.agent(row["agent_id"])
         if not agent or not agent.get("telegram_peer"):
             return None, f"{row['agent_id']} has no telegram_peer configured."
+        missing = permission_mod.missing_permissions(agent, scopes)
+        if missing:
+            return None, permission_mod.permission_denied_message(row["agent_id"], agent, missing)
 
         steps = int(steps) if steps else self.max_steps
         avg = db.avg_tokens_per_call(self.db_path)
         est = estimate_run(steps, avg, self.token_budget)
+        stored_task = permission_mod.embed_task_requirements(clean_task, scopes)
 
         task_id = uuid.uuid4().hex[:12]
         db.create_loop_run(
             self.db_path, task_id, row["agent_id"], project_name, row["status"],
-            task, est.est_tokens, status="estimated",
+            stored_task, est.est_tokens, status="estimated",
         )
         db.log_loop_event(self.db_path, task_id, 0, "estimate", est.summary())
         return task_id, est
@@ -87,8 +98,19 @@ class LoopSupervisor:
             return LoopResult(task_id, run["status"],
                               f"Loop {task_id} is already {run['status']}.")
         agent = self.config.agent(run["agent_id"])
+        task, scopes = permission_mod.extract_task_requirements(run["task"])
+        missing = permission_mod.missing_permissions(agent, scopes)
+        if missing:
+            db.update_loop_run(self.db_path, task_id, status="error")
+            db.log_event(self.db_path, run["agent_id"], "loop_error",
+                         f"[{task_id}] permissions changed before start"[:500])
+            return LoopResult(
+                task_id, "error",
+                permission_mod.permission_denied_message(run["agent_id"], agent, missing),
+                done=True,
+            )
         instruction = protocol.frame_instruction(
-            run["task"], run["project"], run["project_status"], self.max_steps,
+            task, run["project"], run["project_status"], self.max_steps,
         )
         db.update_loop_run(self.db_path, task_id, status="running")
         db.log_event(self.db_path, run["agent_id"], "loop_start",
@@ -176,6 +198,30 @@ class LoopSupervisor:
                 return LoopResult(task_id, "error",
                                   f"Loop {task_id} transport error: {e}", done=True)
 
+            if self.memory is not None and self._should_capture_prompt(message):
+                try:
+                    await self.memory.capture_agent_turn(
+                        agent_id,
+                        message,
+                        reply or "",
+                        project_name=project,
+                        run_kind="loop",
+                        task_id=task_id,
+                    )
+                    db.log_event(
+                        self.db_path,
+                        agent_id,
+                        "memory_capture",
+                        f"[project:{project}] [task:{task_id}] captured loop exchange"[:500],
+                    )
+                except Exception:
+                    db.log_event(
+                        self.db_path,
+                        agent_id,
+                        "memory_error",
+                        f"[project:{project}] [task:{task_id}] loop capture failed"[:500],
+                    )
+
             cp = protocol.parse_checkpoint(reply or "", self.allow_heuristic)
 
             seq_warn = ""
@@ -238,6 +284,14 @@ class LoopSupervisor:
                 db.log_loop_event(self.db_path, task_id, cp.seq, "budget_alert",
                                   self._budget_line(task_id, monitor, ""))
             message = protocol.CONTINUE + (f" {seq_warn}" if seq_warn else "")
+
+    def _should_capture_prompt(self, message: str) -> bool:
+        text = (message or "").strip()
+        if not text:
+            return False
+        if text == protocol.CONTINUE:
+            return False
+        return not text.startswith(protocol.CONTINUE + " (warning:")
 
     # --- reporting ---------------------------------------------------------
 

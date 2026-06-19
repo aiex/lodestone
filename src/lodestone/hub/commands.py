@@ -2,6 +2,7 @@ import asyncio
 
 from ..config import normalize_project
 from ..registry import db
+from . import permissions as permission_mod
 
 HELP_TEXT = (
     "Lodestone — commands\n"
@@ -9,6 +10,9 @@ HELP_TEXT = (
     "/agent <id> — full detail + recent activity for one agent\n"
     "/project <name> — show which agent owns one project\n"
     "/projects — project -> agent map\n"
+    "/memory_status — check the memory backend health\n"
+    "/memory_search <agent_id> <query> — search one agent's memory\n"
+    "/memory_search_project <project> <query> — search memory scoped to one project owner\n"
     "/dispatch <agent_id> <task> — send a task to an agent and report back\n"
     "/dispatch_project <project> <task> — route by project owner and dispatch\n"
     "/loop <project> <task> — estimate an autonomous Agent Loop (then confirm)\n"
@@ -18,6 +22,7 @@ HELP_TEXT = (
     "/approve <task_id> — approve a live project's PR so it can deploy\n"
     "/reject <task_id> — reject a live project's PR and stop the loop\n"
     "/loop_stop <task_id> — stop a running loop\n"
+    "Prefix a task with [requires:scope1,scope2] to enforce agent permissions\n"
     "/help — show this message"
 )
 
@@ -71,17 +76,23 @@ def cmd_projects(db_path: str) -> str:
 
 
 def cmd_project(db_path: str, project_name: str) -> str:
-    row = db.get_project(db_path, project_name)
+    try:
+        row = db.get_project(db_path, project_name)
+    except ValueError as e:
+        return str(e)
     if not row:
         return f"No such project: {project_name}"
     return f"{row['name']} -> {row['agent_name']} [{row['agent_id']}]"
 
 
 async def cmd_dispatch(client, db_path: str, config, agent_id: str, task: str,
-                       project_name: str = None) -> str:
+                       project_name: str = None, required_permissions=None, memory=None) -> str:
     agent = config.agent(agent_id)
     if not agent:
         return f"No such agent: {agent_id}"
+    clean_task, scopes = permission_mod.extract_task_requirements(task, required_permissions)
+    if not clean_task:
+        return "Task cannot be empty."
     peer = agent.get("telegram_peer")
     if not peer:
         return f"{agent_id} has no telegram_peer configured."
@@ -89,13 +100,16 @@ async def cmd_dispatch(client, db_path: str, config, agent_id: str, task: str,
         owned = [normalize_project(p)[0] for p in agent.get("projects", []) or []]
         if project_name not in owned:
             return f"{agent_id} does not own project: {project_name}"
+    missing = permission_mod.missing_permissions(agent, scopes)
+    if missing:
+        return permission_mod.permission_denied_message(agent_id, agent, missing)
 
     timeout = config.dispatch.get("reply_timeout", 60)
-    detail = task if not project_name else f"[project:{project_name}] {task}"
+    detail = permission_mod.annotate_detail(clean_task, project_name, scopes)
     db.log_event(db_path, agent_id, "dispatch", detail)
     try:
         async with client.conversation(peer, timeout=timeout) as conv:
-            await conv.send_message(task)
+            await conv.send_message(clean_task)
             resp = await conv.get_response()
             reply = resp.text or "(empty reply)"
     except asyncio.TimeoutError:
@@ -105,17 +119,102 @@ async def cmd_dispatch(client, db_path: str, config, agent_id: str, task: str,
         db.log_event(db_path, agent_id, "error", str(e))
         return f"Dispatch to {agent['name']} failed: {e}"
 
+    if memory is not None:
+        try:
+            await memory.capture_agent_turn(
+                agent_id,
+                clean_task,
+                reply,
+                project_name=project_name or "",
+                run_kind="dispatch",
+            )
+            db.log_event(
+                db_path,
+                agent_id,
+                "memory_capture",
+                permission_mod.annotate_detail("captured dispatch exchange", project_name),
+            )
+        except Exception:
+            db.log_event(
+                db_path,
+                agent_id,
+                "memory_error",
+                permission_mod.annotate_detail("dispatch capture failed", project_name),
+            )
+
     db.log_event(db_path, agent_id, "reply", reply[:500])
     return f"{agent['name']} replied:\n\n{reply}"
 
 
-async def cmd_dispatch_project(client, db_path: str, config, project_name: str, task: str) -> str:
-    row = db.get_project(db_path, project_name)
+async def cmd_dispatch_project(client, db_path: str, config, project_name: str, task: str,
+                               required_permissions=None, memory=None) -> str:
+    try:
+        row = db.get_project(db_path, project_name)
+    except ValueError as e:
+        return str(e)
     if not row:
         return f"No such project: {project_name}"
     return await cmd_dispatch(
-        client, db_path, config, row["agent_id"], task, project_name=project_name
+        client, db_path, config, row["agent_id"], task,
+        project_name=project_name, required_permissions=required_permissions, memory=memory
     )
+
+
+async def cmd_memory_status(hub) -> str:
+    memory = getattr(hub, "memory", None)
+    if memory is None:
+        return "Memory backend is disabled in config."
+    status = await memory.health()
+    lines = [
+        "Memory backend",
+        f"configured: yes",
+        f"healthy: {'yes' if status.get('ok') else 'no'}",
+        f"base_url: {status.get('base_url') or '—'}",
+        f"namespace: {status.get('namespace') or '—'}",
+        f"detail: {status.get('detail') or '—'}",
+    ]
+    return "\n".join(lines)
+
+
+async def cmd_memory_search_agent(hub, agent_id: str, query: str, project_name: str = "") -> str:
+    memory = getattr(hub, "memory", None)
+    if memory is None:
+        return "Memory backend is disabled in config."
+    agent = hub.config.agent(agent_id)
+    if not agent:
+        return f"No such agent: {agent_id}"
+    try:
+        result = await memory.search_agent_memory(
+            agent_id, query, limit=5, project_name=project_name or ""
+        )
+    except Exception as e:
+        db.log_event(
+            hub.db_path,
+            agent_id,
+            "memory_error",
+            permission_mod.annotate_detail(f"memory search failed: {e}", project_name or None),
+        )
+        return f"Memory search failed: {e}"
+    db.log_event(
+        hub.db_path,
+        agent_id,
+        "memory_search",
+        permission_mod.annotate_detail(f"structured query={query[:120]}", project_name or None),
+    )
+    title = f"Memory for {agent.get('name') or agent_id} [{agent_id}]"
+    if project_name:
+        title += f" / {project_name}"
+    return title + "\n" + (result or "(no structured memories found)")
+
+
+async def cmd_memory_search_project(hub, project_name: str, query: str) -> str:
+    try:
+        row = db.get_project(hub.db_path, project_name)
+    except ValueError as e:
+        return str(e)
+    if not row:
+        return f"No such project: {project_name}"
+    return await cmd_memory_search_agent(hub, row["agent_id"], query, project_name=project_name)
 
 
 # --- Agent Loop commands (Phase 4) -----------------------------------------
@@ -124,40 +223,57 @@ async def cmd_dispatch_project(client, db_path: str, config, project_name: str, 
 # no userbot reports the loop surface as unavailable rather than crashing.
 
 def _supervisor(hub):
+    if not getattr(hub.config, "loop_enabled", False):
+        return None
     if getattr(hub, "userbot", None) is None:
         return None
     return hub.loop_supervisor()
 
 
 _UNAVAILABLE = "Agent Loop unavailable: userbot (account) is not connected."
+_DISABLED = "Agent Loop is disabled in config. Set loop.enabled: true to enable it."
+
+
+def _loop_unavailable_reason(hub) -> str:
+    if not getattr(hub.config, "loop_enabled", False):
+        return _DISABLED
+    if getattr(hub, "userbot", None) is None:
+        return _UNAVAILABLE
+    return _UNAVAILABLE
 
 
 async def _delegate(hub, method, *args) -> str:
     """Run one supervisor method that returns a LoopResult, surfacing .message."""
     sup = _supervisor(hub)
     if sup is None:
-        return _UNAVAILABLE
+        return _loop_unavailable_reason(hub)
     res = await getattr(sup, method)(*args)
     return res.message
 
 
-async def cmd_loop(hub, project_name: str, task: str) -> str:
+async def cmd_loop(hub, project_name: str, task: str, required_permissions=None) -> str:
     sup = _supervisor(hub)
     if sup is None:
-        return _UNAVAILABLE
-    task_id, est = sup.estimate(project_name, task)
+        return _loop_unavailable_reason(hub)
+    clean_task, scopes = permission_mod.extract_task_requirements(task, required_permissions)
+    task_id, est = sup.estimate(project_name, clean_task, required_permissions=scopes)
     if task_id is None:
         return est
     row = db.get_project(hub.db_path, project_name)
     gate = ("LIVE — will pause at PR creation for your /approve."
             if row and row["status"] == "live"
             else "dev — runs straight through.")
-    return (
-        f"Loop estimated for '{project_name}' ({gate})\n"
-        f"{est.summary()}\n"
-        f"Task id: {task_id}\n"
-        f"Start it with: /loop_confirm {task_id}   (or /loop_stop {task_id} to cancel)"
-    )
+    lines = [
+        f"Loop estimated for '{project_name}' ({gate})",
+        est.summary(),
+    ]
+    if scopes:
+        lines.append(f"Required permissions: {', '.join(scopes)}")
+    lines.extend([
+        f"Task id: {task_id}",
+        f"Start it with: /loop_confirm {task_id}   (or /loop_stop {task_id} to cancel)",
+    ])
+    return "\n".join(lines)
 
 
 async def cmd_loop_confirm(hub, task_id: str) -> str:

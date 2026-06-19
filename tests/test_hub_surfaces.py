@@ -79,7 +79,9 @@ class HubSurfaceTests(unittest.IsolatedAsyncioTestCase):
         hub.userbot = object()
         with patch.object(userbot.control.commands, "cmd_dispatch_project", AsyncMock(return_value="ok")) as mocked:
             reply = await control.handle_text(hub, "/dispatch_project cricap refresh data")
-        mocked.assert_awaited_once_with(hub.userbot, hub.db_path, hub.config, "cricap", "refresh data")
+        mocked.assert_awaited_once_with(
+            hub.userbot, hub.db_path, hub.config, "cricap", "refresh data", memory=None
+        )
         self.assertEqual(reply, "ok")
 
     def test_attach_hub_handler_requires_hub_chat_id(self):

@@ -66,6 +66,21 @@ class FakeConfig:
         return None
 
 
+class FakeMemory:
+    def __init__(self):
+        self.captures = []
+
+    async def capture_agent_turn(self, agent_id, user_text, assistant_text, **kwargs):
+        self.captures.append(
+            {
+                "agent_id": agent_id,
+                "user_text": user_text,
+                "assistant_text": assistant_text,
+                **kwargs,
+            }
+        )
+
+
 class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -96,6 +111,11 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.get_project(self.db_path, "indiweather")["status"], "live")
         self.assertEqual(db.get_project(self.db_path, "cricap")["status"], "dev")
 
+    def test_sync_rejects_duplicate_project_owners(self):
+        self.config.agents[1]["projects"] = ["96football", "cricap"]
+        with self.assertRaisesRegex(ValueError, "assigned to multiple agents"):
+            db.sync_from_config(self.db_path, self.config)
+
     async def test_cmd_dispatch_project_rejects_unknown_project(self):
         client = FakeClient()
         reply = await commands.cmd_dispatch_project(
@@ -106,8 +126,9 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cmd_dispatch_project_routes_to_owner_and_logs_project(self):
         client = FakeClient()
+        memory = FakeMemory()
         reply = await commands.cmd_dispatch_project(
-            client, self.db_path, self.config, "cricap", "refresh data"
+            client, self.db_path, self.config, "cricap", "refresh data", memory=memory
         )
 
         self.assertEqual(reply, "Hermes A replied:\n\ndone")
@@ -117,9 +138,43 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
         recent = db.recent_logs(self.db_path, limit=1)
         self.assertEqual(recent[0]["kind"], "reply")
 
-        dispatch_log = db.recent_logs(self.db_path, limit=2)[1]
-        self.assertEqual(dispatch_log["kind"], "dispatch")
+        dispatch_log = next(r for r in db.recent_logs(self.db_path, limit=4) if r["kind"] == "dispatch")
         self.assertEqual(dispatch_log["detail"], "[project:cricap] refresh data")
+        self.assertEqual(memory.captures[0]["project_name"], "cricap")
+        self.assertEqual(memory.captures[0]["assistant_text"], "done")
+
+    async def test_cmd_dispatch_enforces_inline_required_permissions(self):
+        client = FakeClient()
+        reply = await commands.cmd_dispatch(
+            client, self.db_path, self.config,
+            "hermes-a", "[requires:ec2:hermes-a] refresh data"
+        )
+        self.assertEqual(reply, "Hermes A replied:\n\ndone")
+        self.assertEqual(client.messages, ["refresh data"])
+        dispatch_log = db.recent_logs(self.db_path, limit=2)[1]
+        self.assertEqual(
+            dispatch_log["detail"],
+            "[requires:ec2:hermes-a] refresh data",
+        )
+
+    async def test_cmd_dispatch_rejects_missing_required_permissions(self):
+        client = FakeClient()
+        reply = await commands.cmd_dispatch(
+            client, self.db_path, self.config,
+            "hermes-a", "refresh data", required_permissions=["gateway:prod"],
+        )
+        self.assertIn("lacks required permissions", reply)
+        self.assertEqual(client.peers, [])
+
+    async def test_cmd_dispatch_honors_wildcard_permission(self):
+        self.config.agents[0]["permissions"] = ["ec2:*"]
+        client = FakeClient()
+        reply = await commands.cmd_dispatch(
+            client, self.db_path, self.config,
+            "hermes-a", "refresh data", required_permissions=["ec2:hermes-a"],
+        )
+        self.assertEqual(reply, "Hermes A replied:\n\ndone")
+        self.assertEqual(client.peers, ["@hermes_a_bot"])
 
     async def test_cmd_dispatch_rejects_project_mismatch(self):
         client = FakeClient()

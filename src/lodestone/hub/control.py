@@ -6,11 +6,13 @@ from . import commands, router
 class Hub:
     """Shared context passed to every control surface (bot, userbot, web)."""
 
-    def __init__(self, config, db_path, userbot=None, orchestrator=None, allowed_users=None):
+    def __init__(self, config, db_path, userbot=None, orchestrator=None, allowed_users=None,
+                 memory=None):
         self.config = config
         self.db_path = db_path
         self.userbot = userbot            # account client (dispatch transport)
         self.orchestrator = orchestrator  # LLM brain, or None if AI disabled
+        self.memory = memory              # shared memory gateway adapter, or None
         self.allowed_users = set(allowed_users or [])
         self._loop_supervisor = None
 
@@ -20,7 +22,7 @@ class Hub:
         Cached on first use. Returns None if there is no userbot to message
         agents through.
         """
-        if self.userbot is None:
+        if self.userbot is None or not getattr(self.config, "loop_enabled", False):
             return None
         if self._loop_supervisor is None:
             from .loop import LoopSupervisor
@@ -41,7 +43,9 @@ class Hub:
                 except asyncio.TimeoutError:
                     raise TimeoutError(f"no checkpoint within {timeout}s")
 
-            self._loop_supervisor = LoopSupervisor(self.db_path, self.config, send_and_wait)
+            self._loop_supervisor = LoopSupervisor(
+                self.db_path, self.config, send_and_wait, memory=self.memory
+            )
         return self._loop_supervisor
 
 
@@ -71,13 +75,27 @@ async def handle_text(hub: Hub, text: str):
             return commands.cmd_project(hub.db_path, project_name) if project_name else "Usage: /project <name>"
         if cmd == "projects":
             return commands.cmd_projects(hub.db_path)
+        if cmd == "memory_status":
+            return await commands.cmd_memory_status(hub)
+        if cmd == "memory_search":
+            parts = rest.split(maxsplit=1)
+            if len(parts) < 2:
+                return "Usage: /memory_search <agent_id> <query>"
+            return await commands.cmd_memory_search_agent(hub, parts[0], parts[1])
+        if cmd == "memory_search_project":
+            parts = rest.split(maxsplit=1)
+            if len(parts) < 2:
+                return "Usage: /memory_search_project <project> <query>"
+            return await commands.cmd_memory_search_project(hub, parts[0], parts[1])
         if cmd == "dispatch":
             parts = rest.split(maxsplit=1)
             if len(parts) < 2:
                 return "Usage: /dispatch <agent_id> <task>"
             if hub.userbot is None:
                 return "dispatch unavailable: userbot (account) is not connected"
-            return await commands.cmd_dispatch(hub.userbot, hub.db_path, hub.config, parts[0], parts[1])
+            return await commands.cmd_dispatch(
+                hub.userbot, hub.db_path, hub.config, parts[0], parts[1], memory=hub.memory
+            )
         if cmd == "dispatch_project":
             parts = rest.split(maxsplit=1)
             if len(parts) < 2:
@@ -85,7 +103,7 @@ async def handle_text(hub: Hub, text: str):
             if hub.userbot is None:
                 return "dispatch unavailable: userbot (account) is not connected"
             return await commands.cmd_dispatch_project(
-                hub.userbot, hub.db_path, hub.config, parts[0], parts[1]
+                hub.userbot, hub.db_path, hub.config, parts[0], parts[1], memory=hub.memory
             )
         if cmd == "loop":
             parts = rest.split(maxsplit=1)

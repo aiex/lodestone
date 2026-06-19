@@ -5,12 +5,14 @@ All JSON endpoints live under /api and require the token; the single HTML page
 is served at / and bootstraps itself by calling those endpoints.
 """
 
+import asyncio
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from ..config import load_config
+from ..memory import build_memory_client
 from ..registry import db
 from . import auth
 
@@ -20,6 +22,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 def create_app(config) -> FastAPI:
     app = FastAPI(title="Lodestone Dashboard", docs_url=None, redoc_url=None)
     db_path = config.db_path
+    memory_client = build_memory_client(config)
     # Ensure the (additive) schema exists even against an old database.
     db.init_db(db_path)
 
@@ -62,11 +65,16 @@ def create_app(config) -> FastAPI:
         projects = db.list_projects(db_path)
         totals = db.usage_totals(db_path)
         by_kind = {r["kind"]: r["count"] for r in db.activity_by_kind(db_path)}
+        mem_kind = {r["kind"]: r["count"] for r in db.activity_by_kind_prefix(db_path, "memory_")}
         return {
             "agents": len(agents),
             "projects": len(projects),
             "dispatches": by_kind.get("dispatch", 0),
             "errors": by_kind.get("error", 0) + by_kind.get("timeout", 0),
+            "memory_events": sum(mem_kind.values()),
+            "memory_recalls": mem_kind.get("memory_recall", 0),
+            "memory_searches": mem_kind.get("memory_search", 0),
+            "memory_captures": mem_kind.get("memory_capture", 0),
             "llm_calls": totals["calls"],
             "total_tokens": totals["total_tokens"],
             "cost_usd": round(totals["cost_usd"], 4),
@@ -97,6 +105,27 @@ def create_app(config) -> FastAPI:
             "by_agent": db.usage_by_agent(db_path),
             "daily": db.usage_daily(db_path, min(max(days, 1), 365)),
             "recent": db.recent_usage(db_path, 20),
+        }
+
+    @app.get("/api/memory")
+    def memory(days: int = 30, limit: int = 30, _=guard):
+        status = {
+            "configured": False,
+            "ok": False,
+            "base_url": "",
+            "namespace": "",
+            "detail": "memory is disabled in config",
+        }
+        if memory_client is not None:
+            status = asyncio.run(memory_client.health())
+        return {
+            "status": status,
+            "recent": db.recent_logs_by_kind(db_path, "memory_", min(max(limit, 1), 200)),
+            "recent_errors": db.recent_logs_by_kind(db_path, "memory_error", 10),
+            "by_kind": db.activity_by_kind_prefix(db_path, "memory_"),
+            "by_agent": db.activity_by_agent_prefix(db_path, "memory_", 10),
+            "by_project": db.activity_by_project_prefix(db_path, "memory_", 10),
+            "daily": db.activity_daily_prefix(db_path, "memory_", min(max(days, 1), 365)),
         }
 
     return app

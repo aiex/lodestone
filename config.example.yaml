@@ -41,6 +41,22 @@ ai:
   #   gpt-4o-mini: { input: 0.15, output: 0.60 }
   #   my-proxy-model: { input: 0.0, output: 0.0 }
 
+memory:
+  # Optional: TencentDB-Agent-Memory Gateway integration. Lodestone uses it as a
+  # shared memory plane so the command/orchestrator agent can recall relevant
+  # fleet context before routing work, while heavy history is compacted outside
+  # the LLM prompt.
+  enabled: false
+  # Default standalone Gateway address from TencentDB-Agent-Memory docs.
+  base_url: "http://127.0.0.1:8420"
+  # Leave blank for local sidecar mode; set if you enable Gateway auth.
+  api_key: ""
+  # Session namespace/prefix used by Lodestone when writing orchestrator and
+  # per-agent memory streams.
+  namespace: "lodestone"
+  # Seconds for recall/search/capture HTTP calls.
+  timeout: 10
+
 web:
   # The Phase 3 dashboard. Binds to localhost only by default; auth is a token.
   #   lodestone dashboard   # prints the URL (with token) to open

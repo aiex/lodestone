@@ -90,6 +90,13 @@ def _normalize_status(value) -> str:
     return s if s in VALID_STATUSES else "MILESTONE"
 
 
+def _to_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _heuristic(text: str) -> Checkpoint:
     """Best-effort classification of a free-text agent reply."""
     pr = _PR_URL_RE.search(text or "")
@@ -122,13 +129,12 @@ def parse_checkpoint(text: str, allow_heuristic: bool = True) -> Checkpoint:
     text = text or ""
     env = _extract_envelope(text)
     if env is not None:
-        seq = env.get("seq")
         return Checkpoint(
             status=_normalize_status(env.get("status")),
             summary=_clip(str(env.get("summary", ""))),
-            seq=int(seq) if isinstance(seq, (int, float)) else None,
+            seq=_to_int(env.get("seq"), None),
             pr_url=env.get("pr_url") or None,
-            tokens_used=int(env.get("tokens_used") or 0),
+            tokens_used=max(_to_int(env.get("tokens_used"), 0), 0),
             structured=True,
             raw=text,
             extra={k: v for k, v in env.items()
@@ -175,4 +181,3 @@ def frame_instruction(task: str, project: str, project_status: str,
 
 
 CONTINUE = "approved — continue."
-

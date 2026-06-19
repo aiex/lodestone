@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 
 from .models import SCHEMA
 from ..config import normalize_project
@@ -21,8 +22,25 @@ def init_db(db_path: str) -> None:
     conn.close()
 
 
+def _validate_unique_projects(config) -> None:
+    seen = {}
+    for agent in config.agents:
+        agent_id = agent.get("id")
+        for proj in agent.get("projects", []) or []:
+            name, _status = normalize_project(proj)
+            if not name:
+                raise ValueError(f"Agent {agent_id} has a project with no name.")
+            owner = seen.get(name)
+            if owner and owner != agent_id:
+                raise ValueError(
+                    f"Project '{name}' is assigned to multiple agents: {owner}, {agent_id}"
+                )
+            seen[name] = agent_id
+
+
 def sync_from_config(db_path: str, config) -> None:
     """Rebuild agents/projects/permissions from config. logs are preserved."""
+    _validate_unique_projects(config)
     conn = _connect(db_path)
     conn.executescript(SCHEMA)
     cur = conn.cursor()
@@ -92,13 +110,17 @@ def list_projects(db_path: str) -> list:
 
 def get_project(db_path: str, project_name: str):
     conn = _connect(db_path)
-    row = conn.execute(
+    rows = conn.execute(
         "SELECT p.name AS name, p.agent_id AS agent_id, p.status AS status, "
         "a.name AS agent_name "
         "FROM projects p JOIN agents a ON a.id = p.agent_id WHERE p.name=?",
         (project_name,),
-    ).fetchone()
+    ).fetchall()
     conn.close()
+    if len(rows) > 1:
+        owners = ", ".join(f"{r['agent_name']} [{r['agent_id']}]" for r in rows)
+        raise ValueError(f"Project '{project_name}' is assigned to multiple agents: {owners}")
+    row = rows[0] if rows else None
     return dict(row) if row else None
 
 
@@ -145,11 +167,37 @@ def recent_logs(db_path: str, limit: int = 50) -> list:
     return [dict(r) for r in rows]
 
 
+def recent_logs_by_kind(db_path: str, kind_prefix: str, limit: int = 50) -> list:
+    """Recent logs filtered by a kind prefix, newest first."""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT l.ts AS ts, l.agent_id AS agent_id, a.name AS agent_name, "
+        "       l.kind AS kind, l.detail AS detail "
+        "FROM logs l LEFT JOIN agents a ON a.id = l.agent_id "
+        "WHERE l.kind LIKE ? ORDER BY l.id DESC LIMIT ?",
+        (f"{kind_prefix}%", int(limit)),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def activity_by_kind(db_path: str) -> list:
     """Count of log events grouped by kind (dispatch / reply / error / …)."""
     conn = _connect(db_path)
     rows = conn.execute(
         "SELECT kind, COUNT(*) AS count FROM logs GROUP BY kind ORDER BY count DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def activity_by_kind_prefix(db_path: str, kind_prefix: str) -> list:
+    """Count log events grouped by kind for one prefix family."""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT kind, COUNT(*) AS count FROM logs WHERE kind LIKE ? "
+        "GROUP BY kind ORDER BY count DESC, kind ASC",
+        (f"{kind_prefix}%",),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -164,6 +212,21 @@ def activity_by_agent(db_path: str, limit: int = 10) -> list:
         "FROM logs l LEFT JOIN agents a ON a.id = l.agent_id "
         "GROUP BY l.agent_id, agent_name ORDER BY count DESC, agent_name ASC LIMIT ?",
         (int(limit),),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def activity_by_agent_prefix(db_path: str, kind_prefix: str, limit: int = 10) -> list:
+    """Most active agents by event count inside one kind family."""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT COALESCE(a.name, l.agent_id, '(system)') AS agent_name, "
+        "       l.agent_id AS agent_id, COUNT(*) AS count "
+        "FROM logs l LEFT JOIN agents a ON a.id = l.agent_id "
+        "WHERE l.kind LIKE ? "
+        "GROUP BY l.agent_id, agent_name ORDER BY count DESC, agent_name ASC LIMIT ?",
+        (f"{kind_prefix}%", int(limit)),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -186,6 +249,36 @@ def activity_daily(db_path: str, days: int = 30) -> list:
     ).fetchall()
     conn.close()
     return list(reversed([dict(r) for r in rows]))
+
+
+def activity_daily_prefix(db_path: str, kind_prefix: str, days: int = 30) -> list:
+    """Per-day event counts for one log family."""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT substr(ts,1,10) AS day, COUNT(*) AS total "
+        "FROM logs WHERE kind LIKE ? GROUP BY day ORDER BY day DESC LIMIT ?",
+        (f"{kind_prefix}%", int(days)),
+    ).fetchall()
+    conn.close()
+    return list(reversed([dict(r) for r in rows]))
+
+
+_PROJECT_TAG_RE = re.compile(r"\[project:([^\]]+)\]")
+
+
+def activity_by_project_prefix(db_path: str, kind_prefix: str, limit: int = 10) -> list:
+    """Group one log family by project tag embedded in detail."""
+    rows = recent_logs_by_kind(db_path, kind_prefix, limit=5000)
+    counts = {}
+    for row in rows:
+        match = _PROJECT_TAG_RE.search(row.get("detail") or "")
+        if not match:
+            continue
+        project = match.group(1).strip()
+        counts[project] = counts.get(project, 0) + 1
+    items = [{"project": k, "count": v} for k, v in counts.items()]
+    items.sort(key=lambda r: (-r["count"], r["project"]))
+    return items[: int(limit)]
 
 
 def usage_totals(db_path: str) -> dict:

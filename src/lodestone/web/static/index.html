@@ -48,6 +48,7 @@
   .kind { font-family:ui-monospace,monospace; font-size:11px; padding:1px 6px; border-radius:4px; background:#21262d; }
   .kind.dispatch { color:var(--accent); } .kind.reply { color:var(--accent2); }
   .kind.error, .kind.timeout { color:var(--warn); }
+  .kind.blocked { color:#a371f7; }
   .muted { color:var(--muted); }
   .err { background:var(--panel); border:1px solid var(--warn); border-radius:10px;
     padding:16px; color:var(--warn); }
@@ -89,6 +90,46 @@
   </section>
 
   <section>
+    <h2>Memory activity</h2>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Memory backend status</h3>
+        <div id="memoryStatusCard"></div>
+      </div>
+      <div class="panel">
+        <h3>Recent memory errors</h3>
+        <table id="memoryErrorTable"><thead><tr>
+          <th>When (UTC)</th><th>Agent</th><th>Detail</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Daily memory operations (30d)</h3>
+        <canvas id="memoryDailyChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Memory activity by kind</h3>
+        <canvas id="memoryKindChart"></canvas>
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="panel">
+        <h3>Memory activity by agent</h3>
+        <table id="memoryAgentTable"><thead><tr>
+          <th>Agent</th><th>Events</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <div class="panel">
+        <h3>Memory activity by project</h3>
+        <table id="memoryProjectTable"><thead><tr>
+          <th>Project</th><th>Events</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2>AI usage by model</h2>
     <div class="panel">
       <table id="modelTable"><thead><tr>
@@ -111,6 +152,15 @@
     <div class="panel">
       <table id="agentTable"><thead><tr>
         <th>Agent</th><th>Type</th><th>Host</th><th>Projects</th><th>Permissions</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent memory events</h2>
+    <div class="panel">
+      <table id="memoryRecentTable"><thead><tr>
+        <th>When (UTC)</th><th>Agent</th><th>Kind</th><th>Detail</th>
       </tr></thead><tbody></tbody></table>
     </div>
   </section>
@@ -154,11 +204,29 @@ function cards(s) {
   const items = [
     ["Agents", fmt(s.agents)], ["Projects", fmt(s.projects)],
     ["Dispatches", fmt(s.dispatches)], ["Errors", fmt(s.errors)],
+    ["Memory ops", fmt(s.memory_events)], ["Recalls", fmt(s.memory_recalls)],
     ["LLM calls", fmt(s.llm_calls)], ["Tokens", fmt(s.total_tokens)],
     ["AI cost", usd(s.cost_usd)],
   ];
   $("#cards").innerHTML = items.map(([l, v]) =>
     `<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("");
+}
+
+function memoryStatusCard(s) {
+  const healthy = s && s.configured && s.ok;
+  const badge = healthy
+    ? '<span class="kind reply">healthy</span>'
+    : (s && s.configured
+      ? '<span class="kind error">unhealthy</span>'
+      : '<span class="kind blocked">disabled</span>');
+  $("#memoryStatusCard").innerHTML = `
+    <div class="card">
+      <div class="label">Gateway</div>
+      <div class="value">${badge}</div>
+      <div class="mono muted" style="margin-top:8px">${esc((s && s.base_url) || "—")}</div>
+      <div class="muted" style="margin-top:8px">namespace: ${esc((s && s.namespace) || "—")}</div>
+      <div style="margin-top:8px">${esc((s && s.detail) || "")}</div>
+    </div>`;
 }
 
 function rows(sel, data, cells, empty) {
@@ -177,9 +245,9 @@ function drawChart(id, cfg) {
 
 async function load() {
   try {
-    const [s, ag, pr, act, us] = await Promise.all([
+    const [s, ag, pr, act, us, mem] = await Promise.all([
       api("/api/stats"), api("/api/agents"), api("/api/projects"),
-      api("/api/activity?limit=50"), api("/api/usage?days=30"),
+      api("/api/activity?limit=50"), api("/api/usage?days=30"), api("/api/memory?days=30&limit=30"),
     ]);
     $("#error").style.display = "none";
     cards(s);
@@ -211,6 +279,27 @@ async function load() {
       `<span class="mono">${esc(m.model)}</span>`, fmt(m.calls), fmt(m.total_tokens), usd(m.cost_usd),
     ], "No AI usage yet (set ai.api_key and talk to the brain).");
 
+    // Memory by agent / project / recent
+    memoryStatusCard(mem.status || {});
+    rows("#memoryAgentTable", mem.by_agent, a => [
+      `${esc(a.agent_name)} <span class="mono muted">[${esc(a.agent_id || "—")}]</span>`,
+      fmt(a.count),
+    ], "No memory activity yet.");
+    rows("#memoryProjectTable", mem.by_project, p => [
+      `<span class="mono">${esc(p.project)}</span>`, fmt(p.count),
+    ], "No project-scoped memory activity yet.");
+    rows("#memoryRecentTable", mem.recent, r => [
+      `<span class="mono">${esc((r.ts || "").replace("T", " ").replace("+00:00", ""))}</span>`,
+      esc(r.agent_name || r.agent_id || "—"),
+      `<span class="kind ${esc(r.kind)}">${esc(r.kind)}</span>`,
+      `<span class="muted">${esc((r.detail || "").slice(0, 120))}</span>`,
+    ], "No memory events yet.");
+    rows("#memoryErrorTable", mem.recent_errors, r => [
+      `<span class="mono">${esc((r.ts || "").replace("T", " ").replace("+00:00", ""))}</span>`,
+      esc(r.agent_name || r.agent_id || "—"),
+      `<span class="muted">${esc((r.detail || "").slice(0, 120))}</span>`,
+    ], "No memory errors.");
+
     // Usage by agent
     rows("#usageAgentTable", us.by_agent, a => [
       `${esc(a.agent_name)} <span class="mono muted">[${esc(a.agent_id || "—")}]</span>`,
@@ -236,6 +325,29 @@ async function load() {
         datasets: [{ label: "Events", data: act.by_agent.map(a => a.count), backgroundColor: "#f0883e" }] },
       options: { responsive: true, indexAxis: "y", scales: { x: { beginAtZero: true } },
         plugins: { legend: { display: false } } },
+    });
+
+    // Memory daily chart
+    drawChart("memoryDailyChart", {
+      type: "line",
+      data: { labels: mem.daily.map(d => d.day),
+        datasets: [{ label: "Memory ops", data: mem.daily.map(d => d.total),
+          borderColor: "#a371f7", backgroundColor: "rgba(163,113,247,.15)", fill: true, tension: .25 }] },
+      options: { responsive: true, scales: { y: { beginAtZero: true } },
+        plugins: { legend: { position: "bottom" } } },
+    });
+
+    // Memory kind chart
+    drawChart("memoryKindChart", {
+      type: "doughnut",
+      data: {
+        labels: mem.by_kind.map(k => k.kind.replace("memory_", "")),
+        datasets: [{
+          data: mem.by_kind.map(k => k.count),
+          backgroundColor: ["#a371f7", "#4493f8", "#3fb950", "#f0883e", "#6e7681"],
+        }],
+      },
+      options: { responsive: true, plugins: { legend: { position: "bottom" } } },
     });
 
     // Cost chart

@@ -43,6 +43,34 @@ class FakeAccount:
         return FakeConv(reply)
 
 
+class FakeMemory:
+    def __init__(self):
+        self.captures = []
+        self.searches = []
+        self.health_calls = 0
+
+    async def capture_agent_turn(self, agent_id, user_text, assistant_text, **kwargs):
+        self.captures.append((agent_id, user_text, assistant_text, kwargs))
+
+    async def health(self):
+        self.health_calls += 1
+        return {
+            "configured": True,
+            "ok": True,
+            "base_url": "http://127.0.0.1:8420",
+            "namespace": "lodestone",
+            "detail": "ok",
+        }
+
+    async def search_agent_memory(self, agent_id, query, limit=5, memory_type="", project_name=""):
+        self.searches.append(("memory", agent_id, query, limit, memory_type, project_name))
+        return "remembered summary"
+
+    async def search_agent_conversation(self, agent_id, query, limit=5, project_name=""):
+        self.searches.append(("conversation", agent_id, query, limit, project_name))
+        return "raw conversation"
+
+
 def make_hub(db_path, userbot=None, allowed_users=None):
     agents = [{
         "id": "a1", "name": "A1", "type": "t", "host": "h", "telegram_peer": "@a",
@@ -51,8 +79,9 @@ def make_hub(db_path, userbot=None, allowed_users=None):
     }]
     cfg = SimpleNamespace(agents=agents, ai={"model": "gpt-4o-mini"},
                           dispatch={"reply_timeout": 30},
-                          loop={"token_budget": 100000, "max_steps": 10})
+                          loop={"enabled": True, "token_budget": 100000, "max_steps": 10})
     cfg.agent = lambda aid: next((a for a in agents if a["id"] == aid), None)
+    cfg.loop_enabled = bool(cfg.loop.get("enabled"))
     db.init_db(db_path)
     db.sync_from_config(db_path, cfg)
     return control.Hub(cfg, db_path, userbot=userbot, allowed_users=allowed_users or [1])
@@ -116,10 +145,73 @@ class LoopCommandTests(unittest.IsolatedAsyncioTestCase):
         tid = _task_id_from(result)
         self.assertEqual(db.get_loop_run(self.db_path, tid)["status"], "estimated")
 
+    async def test_dispatch_tool_passes_required_permissions(self):
+        result = await tools.run_tool(
+            "dispatch",
+            {"agent_id": "a1", "task": "build it", "required_permissions": ["y"]},
+            self.hub,
+        )
+        self.assertIn("lacks required permissions", result)
+
+    async def test_memory_search_tools_use_hub_memory(self):
+        self.hub.memory = FakeMemory()
+        result = await tools.run_tool(
+            "search_agent_memory",
+            {"agent_id": "a1", "query": "deploy habits", "limit": 3, "memory_type": "episodic"},
+            self.hub,
+        )
+        self.assertEqual(result, "remembered summary")
+        result2 = await tools.run_tool(
+            "search_agent_conversation",
+            {"agent_id": "a1", "query": "postgres", "limit": 2},
+            self.hub,
+        )
+        self.assertEqual(result2, "raw conversation")
+
+    async def test_memory_status_command_reports_backend_health(self):
+        self.hub.memory = FakeMemory()
+        out = await control.handle_text(self.hub, "/memory_status")
+        self.assertIn("healthy: yes", out)
+        self.assertIn("http://127.0.0.1:8420", out)
+
+    async def test_memory_search_command_queries_agent_memory(self):
+        self.hub.memory = FakeMemory()
+        out = await control.handle_text(self.hub, "/memory_search a1 deploy habits")
+        self.assertIn("remembered summary", out)
+
+    async def test_memory_search_project_command_resolves_owner(self):
+        self.hub.memory = FakeMemory()
+        out = await control.handle_text(self.hub, "/memory_search_project devproj postgres")
+        self.assertIn("remembered summary", out)
+        self.assertEqual(self.hub.memory.searches[0][-1], "devproj")
+
+    async def test_loop_captures_initial_agent_exchange_to_memory(self):
+        self.hub.memory = FakeMemory()
+        msg = await control.handle_text(self.hub, "/loop devproj build it")
+        tid = _task_id_from(msg)
+        self.acct.script = [env("DONE", 1)]
+        await control.handle_text(self.hub, f"/loop_confirm {tid}")
+        self.assertEqual(self.hub.memory.captures[0][0], "a1")
+        self.assertIn("project 'devproj'", self.hub.memory.captures[0][1])
+        self.assertIn("DONE", self.hub.memory.captures[0][2])
+
     async def test_loop_unavailable_without_userbot(self):
         hub = make_hub(self.db_path, userbot=None, allowed_users=[1])
         out = await control.handle_text(hub, "/loop devproj build it")
         self.assertIn("unavailable", out.lower())
+
+    async def test_loop_rejects_missing_required_permissions(self):
+        out = await control.handle_text(self.hub, "/loop devproj [requires:y] build it")
+        self.assertIn("lacks required permissions", out)
+        self.assertEqual(db.list_loop_runs(self.db_path), [])
+
+    async def test_loop_disabled_in_config(self):
+        hub = make_hub(self.db_path, userbot=self.acct, allowed_users=[1])
+        hub.config.loop["enabled"] = False
+        hub.config.loop_enabled = False
+        out = await control.handle_text(hub, "/loop devproj build it")
+        self.assertIn("disabled", out.lower())
+        self.assertEqual(db.list_loop_runs(self.db_path), [])
 
     async def test_loop_status_reports_active(self):
         msg = await control.handle_text(self.hub, "/loop devproj build it")

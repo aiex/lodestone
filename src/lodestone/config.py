@@ -28,6 +28,15 @@ class Config:
         return self._data.get("ai", {})
 
     @property
+    def memory(self) -> dict:
+        return self._data.get("memory", {}) or {}
+
+    @property
+    def memory_enabled(self) -> bool:
+        cfg = self.memory
+        return bool(cfg) and bool(cfg.get("enabled", False))
+
+    @property
     def web(self) -> dict:
         """Dashboard settings. Defaults bind to localhost only (token auth)."""
         return self._data.get("web", {}) or {}
@@ -36,6 +45,12 @@ class Config:
     def loop(self) -> dict:
         """Agent Loop settings. Absent block == feature off (enabled defaults False)."""
         return self._data.get("loop", {}) or {}
+
+    @property
+    def loop_enabled(self) -> bool:
+        """Agent Loop is opt-in; absent block or enabled:false keeps it off."""
+        cfg = self.loop
+        return bool(cfg) and bool(cfg.get("enabled", False))
 
     @property
     def db_path(self) -> str:

@@ -1,6 +1,8 @@
 import argparse
+import asyncio
 
 from .config import load_config
+from .memory import build_memory_client
 from .registry import db
 
 
@@ -19,6 +21,8 @@ def main() -> None:
     sub.add_parser("login", parents=[common], help="one-time interactive login to create the account session")
     sub.add_parser("agents", parents=[common], help="print agents to the terminal (no Telegram needed)")
     sub.add_parser("chats", parents=[common], help="list recent chats and their ids (to find hub_chat_id)")
+    sub.add_parser("memory-status", parents=[common], help="check the TencentDB-Agent-Memory Gateway health")
+    sub.add_parser("memory-smoke", parents=[common], help="run a minimal end-to-end memory smoke test")
     args = parser.parse_args()
     config_path = getattr(args, "config", None)
 
@@ -53,6 +57,12 @@ def main() -> None:
     elif args.cmd == "dashboard":
         from .web import app as webapp
         webapp.serve(config_path)
+
+    elif args.cmd == "memory-status":
+        _memory_status(config_path)
+
+    elif args.cmd == "memory-smoke":
+        _memory_smoke(config_path)
 
     else:
         parser.print_help()
@@ -89,6 +99,40 @@ def _login(config_path) -> None:
     with client:  # prompts for phone number + login code on first run
         me = client.loop.run_until_complete(client.get_me())
         print(f"Logged in as {me.first_name} (id={me.id}). Session saved.")
+
+
+def _build_memory(config_path):
+    config = load_config(config_path)
+    memory = build_memory_client(config)
+    return config, memory
+
+
+def _print_memory_status(status: dict) -> None:
+    print(f"configured: {'yes' if status.get('configured') else 'no'}")
+    if status.get("base_url"):
+        print(f"base_url:   {status['base_url']}")
+    if status.get("namespace"):
+        print(f"namespace:  {status['namespace']}")
+    print(f"healthy:    {'yes' if status.get('ok') else 'no'}")
+    if "smoke_ok" in status:
+        print(f"smoke_ok:   {'yes' if status.get('smoke_ok') else 'no'}")
+    print(f"detail:     {status.get('detail', '')}")
+
+
+def _memory_status(config_path) -> None:
+    _config, memory = _build_memory(config_path)
+    if memory is None:
+        _print_memory_status({"configured": False, "ok": False, "detail": "memory is disabled in config"})
+        return
+    _print_memory_status(asyncio.run(memory.health()))
+
+
+def _memory_smoke(config_path) -> None:
+    _config, memory = _build_memory(config_path)
+    if memory is None:
+        _print_memory_status({"configured": False, "ok": False, "detail": "memory is disabled in config"})
+        return
+    _print_memory_status(asyncio.run(memory.smoke_test()))
 
 
 if __name__ == "__main__":

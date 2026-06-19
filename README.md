@@ -28,6 +28,11 @@ you ──> hub group ──> Lodestone (userbot) ──> agent bots
 a local SQLite registry on every start; the `logs` and `ai_usage` tables are
 append-only history — what the [dashboard](#the-dashboard) reads from.
 
+If you enable the optional TencentDB-Agent-Memory Gateway, Lodestone also gains
+a **shared memory plane**: the orchestrator can recall compact fleet context
+before routing work, and agent interactions are captured out-of-band so context
+does not have to stay in the prompt forever.
+
 ## Privacy model — open source without leaking anything
 
 The repo ships only **code + a placeholder template**. All real fleet info stays
@@ -96,6 +101,9 @@ Two ways in, sharing one brain:
 | `/agent <id>` | Full detail for one agent + recent activity |
 | `/project <name>` | Look up which agent owns one project |
 | `/projects` | Reverse lookup: project → which agent runs it |
+| `/memory_status` | Check whether the memory gateway is enabled and healthy |
+| `/memory_search <agent_id> <query>` | Search one agent's structured memory |
+| `/memory_search_project <project> <query>` | Search memory scoped to a project's owning agent |
 | `/dispatch <agent_id> <task>` | Send a task to an agent, wait, report the reply |
 | `/dispatch_project <project> <task>` | Validate the project's owner from the registry, then dispatch |
 | `/loop <project> <task>` | Estimate an autonomous [Agent Loop](#the-agent-loop) (then confirm) |
@@ -108,6 +116,51 @@ Two ways in, sharing one brain:
 
 Natural language (e.g. "tell the cricket agent to refresh today's data") goes to
 the AI brain when `ai.api_key` is set; otherwise only slash commands work.
+
+## Unified Memory
+
+Lodestone can plug into
+[`TencentDB-Agent-Memory`](https://github.com/TencentCloud/TencentDB-Agent-Memory)
+through its local HTTP Gateway. This gives you one place to manage per-agent and
+orchestrator memory without stuffing long chat history back into every prompt.
+
+- **Recall before routing.** The orchestrator prefetches compact memory context
+  before planning, and the model can use `search_agent_memory` /
+  `search_agent_conversation` tools to inspect a candidate agent's prior work.
+- **Capture after work.** Successful dispatches and meaningful Agent Loop
+  exchanges are written back to the Gateway, so each agent's operational memory
+  accumulates outside Telegram chat scrollback.
+- **Token discipline by design.** Lodestone only injects recalled snippets; the
+  heavy L0-L3 layering, summarization, and storage lifecycle stay on the memory
+  Gateway side.
+
+Minimal config:
+
+```yaml
+memory:
+  enabled: true
+  base_url: "http://127.0.0.1:8420"
+  api_key: ""          # set if you enabled Gateway auth
+  namespace: "lodestone"
+  timeout: 10
+```
+
+The default `base_url` matches TencentDB-Agent-Memory's standalone Gateway. If
+you enable the Gateway's auth switch, set `memory.api_key` so Lodestone sends a
+Bearer token. When a user request names a known project, Lodestone now performs
+an extra **project-scoped recall** against that owning agent's memory stream, so
+routing can use prior project context instead of only fleet-global memory.
+
+Operational checks:
+
+```bash
+lodestone memory-status
+lodestone memory-smoke
+```
+
+`memory-status` does a lightweight `/health` probe; `memory-smoke` runs a small
+recall + session-end round trip so you can validate that the Gateway is not just
+up, but actually serving memory requests.
 
 ## The dashboard
 
@@ -140,7 +193,16 @@ usage breakdowns, recent activity, and recent AI calls. Token counts are always
 exact; only the cost column depends on the pricing you configure.
 
 JSON endpoints (same token) back every panel, if you want to script against them:
-`/api/stats`, `/api/agents`, `/api/projects`, `/api/activity`, `/api/usage`.
+`/api/stats`, `/api/agents`, `/api/projects`, `/api/activity`, `/api/usage`,
+`/api/memory`.
+
+The memory panel now shows:
+
+- backend health / base_url / namespace
+- recent memory errors
+- daily memory operations
+- memory activity by kind / agent / project
+- recent memory events
 
 ## The Agent Loop
 
@@ -207,14 +269,16 @@ agents:
 One OpenAI-compatible adapter covers OpenAI, Kimi, GLM, or a Meridian proxy —
 set `ai.base_url` / `ai.api_key` / `ai.model`. The brain is given deterministic
 tools (`list_agents`, `get_agent`, `get_project_owner`, `dispatch`,
-`dispatch_project`, `start_loop`, `loop_status`) — the same operations behind the
-slash commands — and uses function-calling to look up and route work. When a
-request is about a known project, it should prefer `dispatch_project`, which
-validates routing against the registry before messaging an agent. `start_loop`
-only *estimates* an [Agent Loop](#the-agent-loop) and returns a task id — the
-human confirm and the live-project PR gate are enforced in code, never at the
-model's discretion. Note: a Claude *API key* is not your Claude Max
-subscription; point `base_url` at a proxy if you want to reuse a subscription.
+`dispatch_project`, `search_agent_memory`, `search_agent_conversation`,
+`start_loop`, `loop_status`) — the same operations behind the slash commands plus
+memory lookup. When a request is about a known project, it should prefer
+`dispatch_project`, which validates routing against the registry before messaging
+an agent. When prior operational context matters, it can inspect the target
+agent's memory before deciding. `start_loop` only *estimates* an
+[Agent Loop](#the-agent-loop) and returns a task id — the human confirm and the
+live-project PR gate are enforced in code, never at the model's discretion.
+Note: a Claude *API key* is not your Claude Max subscription; point `base_url`
+at a proxy if you want to reuse a subscription.
 
 ## Account modes
 

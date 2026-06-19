@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -42,6 +43,9 @@ class WebAppTests(unittest.TestCase):
         db.log_event(self.db_path, "hermes-a", "dispatch", "[project:cricap] refresh data")
         db.log_event(self.db_path, "hermes-a", "reply", "done")
         db.log_event(self.db_path, "hermes-b", "error", "network")
+        db.log_event(self.db_path, "hermes-a", "memory_recall", "[project:cricap] refresh cricap")
+        db.log_event(self.db_path, "hermes-a", "memory_search", "[project:cricap] structured query=deploy habits")
+        db.log_event(self.db_path, "hermes-a", "memory_capture", "[project:cricap] captured dispatch exchange")
         db.log_usage(self.db_path, "hermes-a", "gpt-4o-mini", 100, 50, 150, 0.000045)
         db.log_usage(self.db_path, None, "gpt-4o-mini", 70, 30, 100, 0.000029)
         self.client = TestClient(create_app(self.config))
@@ -67,6 +71,8 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload["projects"], 3)
         self.assertEqual(payload["dispatches"], 1)
         self.assertEqual(payload["errors"], 1)
+        self.assertEqual(payload["memory_events"], 3)
+        self.assertEqual(payload["memory_recalls"], 1)
         self.assertEqual(payload["llm_calls"], 2)
 
     def test_activity_endpoint_exposes_by_agent(self):
@@ -84,3 +90,30 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("recent", payload)
         self.assertEqual(payload["by_agent"][0]["agent_name"], "Hermes A")
         self.assertEqual(payload["recent"][0]["total_tokens"], 100)
+
+    def test_memory_endpoint_exposes_project_and_agent_breakdowns(self):
+        resp = self.client.get("/api/memory?days=30&limit=20", headers={"X-Lodestone-Token": "secret-token"})
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertIn("status", payload)
+        self.assertIn("by_kind", payload)
+        self.assertIn("by_agent", payload)
+        self.assertIn("by_project", payload)
+        self.assertEqual(payload["by_project"][0]["project"], "cricap")
+
+    def test_memory_endpoint_reports_backend_status(self):
+        class FakeMemory:
+            async def health(self):
+                return {
+                    "configured": True,
+                    "ok": True,
+                    "base_url": "http://127.0.0.1:8420",
+                    "namespace": "lodestone",
+                    "detail": "ok",
+                }
+
+        with patch("lodestone.web.app.build_memory_client", return_value=FakeMemory()):
+            client = TestClient(create_app(self.config))
+            resp = client.get("/api/memory?days=30&limit=20", headers={"X-Lodestone-Token": "secret-token"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["status"]["ok"])

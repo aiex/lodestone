@@ -46,6 +46,9 @@ class LoopSupervisorTests(unittest.IsolatedAsyncioTestCase):
 
         return LoopSupervisor(self.db_path, self.cfg, send)
 
+    def _raw_env(self, payload):
+        return f"{MARKER} {json.dumps(payload)}"
+
     async def test_dev_project_runs_through_pr_to_done(self):
         sup = self._supervisor([
             env("MILESTONE", 1),
@@ -148,6 +151,14 @@ class LoopSupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(tid)
         self.assertIn("No such project", msg)
 
+    async def test_confirm_rechecks_required_permissions(self):
+        sup = self._supervisor([env("DONE", 1)])
+        tid, _ = sup.estimate("devproj", "build it", required_permissions=["x"])
+        self.cfg.agents[0]["permissions"] = []
+        res = await sup.confirm_and_run(tid)
+        self.assertEqual(res.state, "error")
+        self.assertIn("lacks required permissions", res.message)
+
     async def test_freetext_pr_on_live_still_gates(self):
         # Agent that ignores the protocol but mentions a PR url: heuristic still
         # catches GATE_PR, so a live project still pauses.
@@ -155,6 +166,15 @@ class LoopSupervisorTests(unittest.IsolatedAsyncioTestCase):
         tid, _ = sup.estimate("liveproj", "ship it")
         res = await sup.confirm_and_run(tid)
         self.assertEqual(res.state, "awaiting_pr_approval")
+
+    async def test_bad_structured_numeric_field_does_not_crash_loop(self):
+        sup = self._supervisor([
+            self._raw_env({"status": "DONE", "seq": "oops", "summary": "done", "tokens_used": "bad"})
+        ])
+        tid, _ = sup.estimate("devproj", "build it")
+        res = await sup.confirm_and_run(tid)
+        self.assertEqual(res.state, "done")
+        self.assertEqual(db.get_loop_run(self.db_path, tid)["used_tokens"], 0)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(cp.structured)
         self.assertEqual(cp.status, "MILESTONE")
 
+    def test_structured_envelope_bad_numeric_fields_do_not_crash(self):
+        cp = parse_checkpoint(env("DONE", seq="oops", tokens_used="bad"))
+        self.assertTrue(cp.structured)
+        self.assertEqual(cp.status, "DONE")
+        self.assertIsNone(cp.seq)
+        self.assertEqual(cp.tokens_used, 0)
+
     def test_heuristic_detects_pr_url(self):
         cp = parse_checkpoint("I opened https://github.com/a/b/pull/9 please review")
         self.assertEqual(cp.status, "GATE_PR")
