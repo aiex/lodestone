@@ -102,11 +102,11 @@ agents:
     host: "ec2-xxxxx"
     telegram_peer: "@hermes_a_bot"
     projects:
-      - cricap                  # bare string => status: dev
-      - indiweather
+      - demo-dev-app            # bare string => status: dev
+      - sample-weather-app
     permissions:
       - "ec2:hermes-a"
-      - "s3:cricap-assets"
+      - "s3:demo-dev-app-assets"
 
   - id: hermes-b
     name: "Hermes B"
@@ -114,7 +114,7 @@ agents:
     host: "ec2-yyyyy"
     telegram_peer: "@hermes_b_bot"
     projects:
-      - 96football
+      - sample-sports-app
     permissions:
       - "ec2:hermes-b"
 
@@ -124,7 +124,7 @@ agents:
     host: "ec2-zzzzz"
     telegram_peer: "@openclaw_bot"
     projects:
-      - name: coldplay.io       # mapping form => explicit status
+      - name: demo-live.example # mapping form => explicit status
         status: live            # loop halts at PR creation for /approve
     permissions:
       - "ec2:openclaw-1"

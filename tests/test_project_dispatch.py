@@ -45,7 +45,7 @@ class FakeConfig:
                 "type": "hermes",
                 "host": "host-a",
                 "telegram_peer": "@hermes_a_bot",
-                "projects": ["cricap", "indiweather"],
+                "projects": ["demo-dev-app", "sample-weather-app"],
                 "permissions": ["ec2:hermes-a"],
             },
             {
@@ -54,7 +54,7 @@ class FakeConfig:
                 "type": "hermes",
                 "host": "host-b",
                 "telegram_peer": "@hermes_b_bot",
-                "projects": ["96football"],
+                "projects": ["sample-sports-app"],
                 "permissions": ["ec2:hermes-b"],
             },
         ]
@@ -94,25 +94,25 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
 
     def test_cmd_project_returns_owner(self):
         self.assertEqual(
-            commands.cmd_project(self.db_path, "cricap"),
-            "cricap -> Hermes A [hermes-a]",
+            commands.cmd_project(self.db_path, "demo-dev-app"),
+            "demo-dev-app -> Hermes A [hermes-a]",
         )
 
     def test_project_status_defaults_to_dev(self):
         # Bare-string projects sync as status 'dev' (backward compatible).
-        self.assertEqual(db.get_project(self.db_path, "cricap")["status"], "dev")
+        self.assertEqual(db.get_project(self.db_path, "demo-dev-app")["status"], "dev")
 
     def test_project_status_mapping_form_is_live(self):
         # Re-sync with a mapping-form project marked live.
         self.config.agents[0]["projects"] = [
-            "cricap", {"name": "indiweather", "status": "live"},
+            "demo-dev-app", {"name": "sample-weather-app", "status": "live"},
         ]
         db.sync_from_config(self.db_path, self.config)
-        self.assertEqual(db.get_project(self.db_path, "indiweather")["status"], "live")
-        self.assertEqual(db.get_project(self.db_path, "cricap")["status"], "dev")
+        self.assertEqual(db.get_project(self.db_path, "sample-weather-app")["status"], "live")
+        self.assertEqual(db.get_project(self.db_path, "demo-dev-app")["status"], "dev")
 
     def test_sync_rejects_duplicate_project_owners(self):
-        self.config.agents[1]["projects"] = ["96football", "cricap"]
+        self.config.agents[1]["projects"] = ["sample-sports-app", "demo-dev-app"]
         with self.assertRaisesRegex(ValueError, "assigned to multiple agents"):
             db.sync_from_config(self.db_path, self.config)
 
@@ -128,7 +128,7 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
         client = FakeClient()
         memory = FakeMemory()
         reply = await commands.cmd_dispatch_project(
-            client, self.db_path, self.config, "cricap", "refresh data", memory=memory
+            client, self.db_path, self.config, "demo-dev-app", "refresh data", memory=memory
         )
 
         self.assertEqual(reply, "Hermes A replied:\n\ndone")
@@ -139,8 +139,8 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recent[0]["kind"], "reply")
 
         dispatch_log = next(r for r in db.recent_logs(self.db_path, limit=4) if r["kind"] == "dispatch")
-        self.assertEqual(dispatch_log["detail"], "[project:cricap] refresh data")
-        self.assertEqual(memory.captures[0]["project_name"], "cricap")
+        self.assertEqual(dispatch_log["detail"], "[project:demo-dev-app] refresh data")
+        self.assertEqual(memory.captures[0]["project_name"], "demo-dev-app")
         self.assertEqual(memory.captures[0]["assistant_text"], "done")
 
     async def test_cmd_dispatch_enforces_inline_required_permissions(self):
@@ -179,17 +179,17 @@ class ProjectDispatchTests(unittest.IsolatedAsyncioTestCase):
     async def test_cmd_dispatch_rejects_project_mismatch(self):
         client = FakeClient()
         reply = await commands.cmd_dispatch(
-            client, self.db_path, self.config, "hermes-b", "refresh data", project_name="cricap"
+            client, self.db_path, self.config, "hermes-b", "refresh data", project_name="demo-dev-app"
         )
-        self.assertEqual(reply, "hermes-b does not own project: cricap")
+        self.assertEqual(reply, "hermes-b does not own project: demo-dev-app")
         self.assertEqual(client.peers, [])
 
     async def test_cmd_dispatch_accepts_dict_form_owned_project(self):
         # Membership must normalize dict-form projects, not compare raw entries.
-        self.config.agents[0]["projects"] = [{"name": "cricap", "status": "live"}]
+        self.config.agents[0]["projects"] = [{"name": "demo-dev-app", "status": "live"}]
         client = FakeClient()
         reply = await commands.cmd_dispatch(
-            client, self.db_path, self.config, "hermes-a", "refresh data", project_name="cricap"
+            client, self.db_path, self.config, "hermes-a", "refresh data", project_name="demo-dev-app"
         )
         self.assertEqual(reply, "Hermes A replied:\n\ndone")
         self.assertEqual(client.peers, ["@hermes_a_bot"])

@@ -56,27 +56,27 @@ class MemoryClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(FakeAsyncClient.calls[0]["headers"]["Authorization"], "Bearer secret")
 
     async def test_scoped_recall_posts_project_and_agent_scope(self):
-        FakeAsyncClient.responses = [{"memory_context": "cricap deployment notes"}]
+        FakeAsyncClient.responses = [{"memory_context": "demo-dev-app deployment notes"}]
         client = MemoryGatewayClient("http://127.0.0.1:8420", namespace="lodestone")
         with patch("lodestone.memory.client.httpx.AsyncClient", FakeAsyncClient):
             text = await client.recall_scoped(
-                "refresh cricap", scope="agent", agent_id="hermes-a", project_name="cricap"
+                "refresh demo-dev-app", scope="agent", agent_id="hermes-a", project_name="demo-dev-app"
             )
-        self.assertEqual(text, "cricap deployment notes")
+        self.assertEqual(text, "demo-dev-app deployment notes")
         self.assertEqual(
-            FakeAsyncClient.calls[0]["json"]["session_id"], "lodestone:agent:hermes-a:cricap"
+            FakeAsyncClient.calls[0]["json"]["session_id"], "lodestone:agent:hermes-a:demo-dev-app"
         )
-        self.assertEqual(FakeAsyncClient.calls[0]["json"]["project"], "cricap")
+        self.assertEqual(FakeAsyncClient.calls[0]["json"]["project"], "demo-dev-app")
 
     async def test_capture_posts_messages_with_agent_metadata(self):
         FakeAsyncClient.responses = [{}]
         client = MemoryGatewayClient("http://127.0.0.1:8420", namespace="lodestone")
         with patch("lodestone.memory.client.httpx.AsyncClient", FakeAsyncClient):
             await client.capture_agent_turn(
-                "hermes-a", "refresh data", "done", project_name="cricap", run_kind="dispatch"
+                "hermes-a", "refresh data", "done", project_name="demo-dev-app", run_kind="dispatch"
             )
         payload = FakeAsyncClient.calls[0]["json"]
-        self.assertEqual(payload["session_id"], "lodestone:agent:hermes-a:cricap")
+        self.assertEqual(payload["session_id"], "lodestone:agent:hermes-a:demo-dev-app")
         self.assertEqual(payload["messages"][0]["content"], "refresh data")
         self.assertEqual(payload["metadata"]["run_kind"], "dispatch")
 

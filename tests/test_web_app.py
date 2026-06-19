@@ -24,7 +24,7 @@ class WebAppTests(unittest.TestCase):
                     "type": "hermes",
                     "host": "host-a",
                     "telegram_peer": "@hermes_a_bot",
-                    "projects": ["cricap", "indiweather"],
+                    "projects": ["demo-dev-app", "sample-weather-app"],
                     "permissions": ["ec2:hermes-a"],
                 },
                 {
@@ -33,19 +33,19 @@ class WebAppTests(unittest.TestCase):
                     "type": "hermes",
                     "host": "host-b",
                     "telegram_peer": "@hermes_b_bot",
-                    "projects": ["96football"],
+                    "projects": ["sample-sports-app"],
                     "permissions": ["ec2:hermes-b"],
                 },
             ],
         )
         db.init_db(self.db_path)
         db.sync_from_config(self.db_path, self.config)
-        db.log_event(self.db_path, "hermes-a", "dispatch", "[project:cricap] refresh data")
+        db.log_event(self.db_path, "hermes-a", "dispatch", "[project:demo-dev-app] refresh data")
         db.log_event(self.db_path, "hermes-a", "reply", "done")
         db.log_event(self.db_path, "hermes-b", "error", "network")
-        db.log_event(self.db_path, "hermes-a", "memory_recall", "[project:cricap] refresh cricap")
-        db.log_event(self.db_path, "hermes-a", "memory_search", "[project:cricap] structured query=deploy habits")
-        db.log_event(self.db_path, "hermes-a", "memory_capture", "[project:cricap] captured dispatch exchange")
+        db.log_event(self.db_path, "hermes-a", "memory_recall", "[project:demo-dev-app] refresh demo-dev-app")
+        db.log_event(self.db_path, "hermes-a", "memory_search", "[project:demo-dev-app] structured query=deploy habits")
+        db.log_event(self.db_path, "hermes-a", "memory_capture", "[project:demo-dev-app] captured dispatch exchange")
         db.log_usage(self.db_path, "hermes-a", "gpt-4o-mini", 100, 50, 150, 0.000045)
         db.log_usage(self.db_path, None, "gpt-4o-mini", 70, 30, 100, 0.000029)
         self.client = TestClient(create_app(self.config))
@@ -99,7 +99,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("by_kind", payload)
         self.assertIn("by_agent", payload)
         self.assertIn("by_project", payload)
-        self.assertEqual(payload["by_project"][0]["project"], "cricap")
+        self.assertEqual(payload["by_project"][0]["project"], "demo-dev-app")
 
     def test_memory_endpoint_reports_backend_status(self):
         class FakeMemory:

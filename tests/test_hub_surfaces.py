@@ -69,18 +69,18 @@ class HubSurfaceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_text_routes_project_command(self):
         hub = make_hub()
-        with patch.object(userbot.control.commands, "cmd_project", return_value="cricap -> Hermes A [hermes-a]") as mocked:
-            reply = await control.handle_text(hub, "/project cricap")
-        mocked.assert_called_once_with(hub.db_path, "cricap")
-        self.assertEqual(reply, "cricap -> Hermes A [hermes-a]")
+        with patch.object(userbot.control.commands, "cmd_project", return_value="demo-dev-app -> Hermes A [hermes-a]") as mocked:
+            reply = await control.handle_text(hub, "/project demo-dev-app")
+        mocked.assert_called_once_with(hub.db_path, "demo-dev-app")
+        self.assertEqual(reply, "demo-dev-app -> Hermes A [hermes-a]")
 
     async def test_handle_text_routes_dispatch_project_command(self):
         hub = make_hub(allowed_users=[1])
         hub.userbot = object()
         with patch.object(userbot.control.commands, "cmd_dispatch_project", AsyncMock(return_value="ok")) as mocked:
-            reply = await control.handle_text(hub, "/dispatch_project cricap refresh data")
+            reply = await control.handle_text(hub, "/dispatch_project demo-dev-app refresh data")
         mocked.assert_awaited_once_with(
-            hub.userbot, hub.db_path, hub.config, "cricap", "refresh data", memory=None
+            hub.userbot, hub.db_path, hub.config, "demo-dev-app", "refresh data", memory=None
         )
         self.assertEqual(reply, "ok")
 

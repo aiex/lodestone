@@ -32,7 +32,7 @@ class FakeMemory:
 
     async def recall_scoped(self, query, scope="agent", agent_id="", project_name=""):
         self.recalled.append((query, scope, agent_id, project_name))
-        return "cricap 最近一次 refresh 需要先檢查 postgres migration。"
+        return "demo-dev-app 最近一次 refresh 需要先檢查 postgres migration。"
 
     async def capture_orchestrator_turn(self, user_text, assistant_text):
         self.captured.append((user_text, assistant_text))
@@ -51,7 +51,7 @@ class OrchestratorMemoryTests(unittest.IsolatedAsyncioTestCase):
                     "type": "hermes",
                     "host": "host-a",
                     "telegram_peer": "@hermes_a_bot",
-                    "projects": ["cricap"],
+                    "projects": ["demo-dev-app"],
                     "permissions": ["ec2:hermes-a"],
                 }
             ],
@@ -68,9 +68,9 @@ class OrchestratorMemoryTests(unittest.IsolatedAsyncioTestCase):
         memory = FakeMemory()
         hub = SimpleNamespace(db_path=self.db_path, config=self.config, memory=memory)
         orch = Orchestrator(provider, hub)
-        reply = await orch.handle("幫我找最適合處理 cricap refresh 的 agent")
+        reply = await orch.handle("幫我找最適合處理 demo-dev-app refresh 的 agent")
         self.assertEqual(reply, "我會交給 Hermes A 處理")
-        self.assertEqual(memory.recalled[0], ("幫我找最適合處理 cricap refresh 的 agent", "orchestrator"))
+        self.assertEqual(memory.recalled[0], ("幫我找最適合處理 demo-dev-app refresh 的 agent", "orchestrator"))
         self.assertEqual(memory.captured[0][1], "我會交給 Hermes A 處理")
         messages = provider.calls[0]["messages"]
         self.assertEqual(messages[1]["role"], "system")

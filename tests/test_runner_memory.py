@@ -19,15 +19,14 @@ class RunnerMemoryTests(unittest.IsolatedAsyncioTestCase):
             memory=memory,
             config=SimpleNamespace(
                 agents=[
-                    {"id": "hermes-a", "projects": ["cricap", {"name": "indiweather", "status": "live"}]},
-                    {"id": "hermes-b", "projects": ["96football"]},
+                    {"id": "hermes-a", "projects": ["demo-dev-app", {"name": "sample-weather-app", "status": "live"}]},
+                    {"id": "hermes-b", "projects": ["sample-sports-app"]},
                 ]
             ),
         )
         await _shutdown_memory(hub)
         self.assertIn(("orchestrator", "", ""), memory.calls)
         self.assertIn(("agent", "hermes-a", ""), memory.calls)
-        self.assertIn(("agent", "hermes-a", "cricap"), memory.calls)
-        self.assertIn(("agent", "hermes-a", "indiweather"), memory.calls)
-        self.assertIn(("agent", "hermes-b", "96football"), memory.calls)
-
+        self.assertIn(("agent", "hermes-a", "demo-dev-app"), memory.calls)
+        self.assertIn(("agent", "hermes-a", "sample-weather-app"), memory.calls)
+        self.assertIn(("agent", "hermes-b", "sample-sports-app"), memory.calls)

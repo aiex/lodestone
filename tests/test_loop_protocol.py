@@ -58,8 +58,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(cp.structured)
 
     def test_frame_instruction_marks_live_gate(self):
-        live = frame_instruction("do it", "coldplay.io", "live", 40)
-        dev = frame_instruction("do it", "cricap", "dev", 40)
+        live = frame_instruction("do it", "demo-live.example", "live", 40)
+        dev = frame_instruction("do it", "demo-dev-app", "dev", 40)
         self.assertIn("LIVE", live)
         self.assertIn("WAIT", live)
         self.assertIn("development", dev)

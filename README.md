@@ -223,7 +223,7 @@ the worker: it self-loops through its own cheap internal steps and reports a
 — Lodestone only parses checkpoints and decides continue / pause / stop.
 
 ```bash
-/loop coldplay.io "add the playlist export feature"
+/loop demo-live.example "add the playlist export feature"
 #  -> ~30,000 tokens estimated (… x 2 safety); budget 2,000,000 -> fits.
 #     Task id: ab12cd34ef56   Start it with: /loop_confirm ab12cd34ef56
 /loop_confirm ab12cd34ef56
@@ -258,9 +258,9 @@ loop:
 agents:
   - id: openclaw-1
     projects:
-      - name: coldplay.io
+      - name: demo-live.example
         status: live          # halts at PR for /approve
-      - cricap                 # bare string => status: dev
+      - demo-dev-app          # bare string => status: dev
 ```
 
 > **Limit:** Lodestone reaches agents only over Telegram text, so the remote
