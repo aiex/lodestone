@@ -26,7 +26,9 @@ you ──> hub group ──> Lodestone (userbot) ──> agent bots
 
 `config.yaml` is the source of truth for your fleet structure. It is synced into
 a local SQLite registry on every start; the `logs` and `ai_usage` tables are
-append-only history — what the [dashboard](#the-dashboard) reads from.
+append-only history — what the [dashboard](#the-dashboard) reads from. Project
+names must be globally unique across agents; Lodestone rejects duplicate owners
+at sync time so project-based routing stays deterministic.
 
 If you enable the optional TencentDB-Agent-Memory Gateway, Lodestone also gains
 a **shared memory plane**: the orchestrator can recall compact fleet context
@@ -57,7 +59,7 @@ maps all live in `config/config.yaml` and the SQLite file — never in source.
 
 ```bash
 git clone <your-repo-url> lodestone && cd lodestone
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .            # or: pip install -r requirements.txt
 
 mkdir -p config data
@@ -116,6 +118,10 @@ Two ways in, sharing one brain:
 
 Natural language (e.g. "tell the cricket agent to refresh today's data") goes to
 the AI brain when `ai.api_key` is set; otherwise only slash commands work.
+
+To enforce scope checks explicitly on `/dispatch`, `/dispatch_project`, or
+`/loop`, prefix the task with `"[requires:scope1,scope2]"`. The same permission
+checks also apply when the AI brain dispatches work through tool calls.
 
 ## Unified Memory
 

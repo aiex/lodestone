@@ -1,4 +1,4 @@
-"""Tool layer: the deterministic Phase 1 operations, exposed to the LLM.
+"""Tool layer for deterministic hub operations exposed to the LLM.
 
 The same functions back both the slash commands and the LLM's tool calls, so
 there is one source of truth for what the hub can actually do.

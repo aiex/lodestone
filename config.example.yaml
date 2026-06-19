@@ -15,7 +15,7 @@ telegram:
   # Session for the front-door bot.
   bot_session: "data/lodestone-bot.session"
   # Front-door bot token from BotFather. This is how you talk to Lodestone.
-  # Leave empty to use the hub group on the account instead (Phase 1 style).
+  # Leave empty to use the hub group on the account instead.
   bot_token: ""
   # Telegram user ids allowed to command the fleet via the bot OR hub group
   # (REQUIRED for any control surface to respond — empty means nobody, which is
@@ -58,7 +58,7 @@ memory:
   timeout: 10
 
 web:
-  # The Phase 3 dashboard. Binds to localhost only by default; auth is a token.
+  # Dashboard settings. Binds to localhost only by default; auth is a token.
   #   lodestone dashboard   # prints the URL (with token) to open
   host: "127.0.0.1"
   port: 8765
